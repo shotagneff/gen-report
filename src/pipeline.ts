@@ -90,3 +90,29 @@ export async function buildProfile(input: CompanyInput): Promise<CompanyProfile>
         : undefined,
   };
 }
+
+/** Agent: 住所・電話番号を抽出する */
+export async function extractContactInfo(
+  text: string,
+): Promise<{ address: string; phone: string }> {
+  const userPrompt = `以下のテキストから会社の住所と代表電話番号を1つずつ抽出してください。
+見つからない場合は空文字にしてください。
+JSON形式のみを返してください（説明不要）。
+
+${text.slice(0, 4000)}
+
+{"address":"...","phone":"..."}`;
+
+  try {
+    const content = await chatCompletion([
+      { role: "user", content: userPrompt },
+    ]);
+    const parsed = extractJsonBlock(content) as Record<string, unknown>;
+    return {
+      address: typeof parsed.address === "string" ? parsed.address : "",
+      phone: typeof parsed.phone === "string" ? parsed.phone : "",
+    };
+  } catch {
+    return { address: "", phone: "" };
+  }
+}

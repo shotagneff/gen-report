@@ -10,7 +10,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CompanyInput } from "../src/types.js";
-import { resolveInput, buildProfile } from "../src/pipeline.js";
+import { resolveInput, buildProfile, extractContactInfo } from "../src/pipeline.js";
+import { updateTracking } from "../src/tracking-sheet.js";
 import { buildProposalSheet, safeFilePrefix } from "../src/pipeline-proposal.js";
 import {
   buildRoadmapRows,
@@ -118,6 +119,20 @@ async function main(): Promise<void> {
       const url = await writeToGoogleSheets(`${proposal.companyName}御中_AIエージェント活用レポート`, data);
       console.error("Created spreadsheet:", url);
       console.log(JSON.stringify({ spreadsheetUrl: url, tabs: 4 }, null, 2));
+
+      // 営業管理リストに追記
+      const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+      const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      if (folderId && keyPath) {
+        try {
+          const siteUrl = raw.officialInfo.type === "url" ? raw.officialInfo.value : "";
+          const { address, phone } = await extractContactInfo(input.officialInfo.value);
+          await updateTracking({ companyName: proposal.companyName, siteUrl, address, phone, reportUrl: url, folderId, credentialsPath: keyPath });
+          console.error("✅ 営業リストに追記しました");
+        } catch (e) {
+          console.error("営業リストへの追記に失敗しました（レポートは生成済み）:", e);
+        }
+      }
     } catch (e) {
       console.error("Google Sheets export failed, falling back to CSV:", e);
       const paths = writeToCsvFallback(data, outDirResolved, prefix, (h, r, p) =>

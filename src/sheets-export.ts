@@ -647,7 +647,7 @@ export interface FullSpreadsheetData {
 }
 
 /** 作成日プレフィックスを生成する（例: 2025年01月15日_） */
-function datePrefix(): string {
+export function datePrefix(): string {
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, "0");

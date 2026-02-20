@@ -9,7 +9,8 @@ import { stdin as input, stdout as output, stderr } from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CompanyInput } from "../src/types.js";
-import { resolveInput, buildProfile } from "../src/pipeline.js";
+import { resolveInput, buildProfile, extractContactInfo } from "../src/pipeline.js";
+import { updateTracking } from "../src/tracking-sheet.js";
 import { deepCrawl } from "../src/deep-crawl.js";
 import { buildProposalSheet, safeFilePrefix } from "../src/pipeline-proposal.js";
 import {
@@ -148,6 +149,20 @@ async function main(): Promise<void> {
       log(`   ${url}`);
       log("");
       console.log(JSON.stringify({ spreadsheetUrl: url, tabs: 4 }, null, 2));
+
+      // 営業管理リストに追記
+      const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+      const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      if (folderId && keyPath) {
+        try {
+          const siteUrl = isUrl ? officialValue : "";
+          const { address, phone } = await extractContactInfo(resolvedInput.officialInfo.value);
+          await updateTracking({ companyName: proposal.companyName, siteUrl, address, phone, reportUrl: url, folderId, credentialsPath: keyPath });
+          log("✅ 営業リストに追記しました");
+        } catch (e) {
+          log(`営業リストへの追記に失敗しました（レポートは生成済み）: ${String(e)}`);
+        }
+      }
     } catch (e) {
       log(`Google Sheets エクスポート失敗: ${String(e)}`);
       log("CSVにフォールバックします...");
