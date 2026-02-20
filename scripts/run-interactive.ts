@@ -13,7 +13,6 @@ import { resolveInput, buildProfile } from "../src/pipeline.js";
 import { deepCrawl } from "../src/deep-crawl.js";
 import { buildProposalSheet, safeFilePrefix } from "../src/pipeline-proposal.js";
 import {
-  buildPremiseRows,
   buildRoadmapRows,
   buildCostEffectAndPackages,
 } from "../src/build-four-tabs.js";
@@ -128,14 +127,13 @@ async function main(): Promise<void> {
   log("考えられる施策を生成中...");
   const proposal = await buildProposalSheet(profile, resolvedInput);
 
-  log("前提条件・ロードマップを生成中...");
-  const premise = buildPremiseRows(proposal);
+  log("ロードマップを生成中...");
   const roadmap = buildRoadmapRows();
 
   log("費用対効果・パッケージを生成中...");
   const { costEffect, packages } = await buildCostEffectAndPackages(proposal);
 
-  const data: FullSpreadsheetData = { proposal, costEffect, packages, roadmap, premise };
+  const data: FullSpreadsheetData = { proposal, costEffect, packages, roadmap };
   const prefix = safeFilePrefix(proposal.companyName);
   const outDir = path.join(repoRoot, "data", "out");
 
@@ -149,7 +147,7 @@ async function main(): Promise<void> {
       log("✅ 完了！スプレッドシートのURLはこちら:");
       log(`   ${url}`);
       log("");
-      console.log(JSON.stringify({ spreadsheetUrl: url, tabs: 5 }, null, 2));
+      console.log(JSON.stringify({ spreadsheetUrl: url, tabs: 4 }, null, 2));
     } catch (e) {
       log(`Google Sheets エクスポート失敗: ${String(e)}`);
       log("CSVにフォールバックします...");

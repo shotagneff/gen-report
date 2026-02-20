@@ -13,7 +13,6 @@ import type { CompanyInput } from "../src/types.js";
 import { resolveInput, buildProfile } from "../src/pipeline.js";
 import { buildProposalSheet, safeFilePrefix } from "../src/pipeline-proposal.js";
 import {
-  buildPremiseRows,
   buildRoadmapRows,
   buildCostEffectAndPackages,
 } from "../src/build-four-tabs.js";
@@ -96,8 +95,7 @@ async function main(): Promise<void> {
   console.error("Generating 考えられる施策...");
   const proposal = await buildProposalSheet(profile, input);
 
-  console.error("Generating 前提条件・承認 & ロードマップ...");
-  const premise = buildPremiseRows(proposal);
+  console.error("Generating ロードマップ...");
   const roadmap = buildRoadmapRows();
 
   console.error("Generating 費用対効果 & パッケージ...");
@@ -108,7 +106,6 @@ async function main(): Promise<void> {
     costEffect,
     packages,
     roadmap,
-    premise,
   };
 
   const prefix = safeFilePrefix(proposal.companyName);
@@ -120,7 +117,7 @@ async function main(): Promise<void> {
     try {
       const url = await writeToGoogleSheets(`${proposal.companyName}御中_AIエージェント活用レポート`, data);
       console.error("Created spreadsheet:", url);
-      console.log(JSON.stringify({ spreadsheetUrl: url, tabs: 5 }, null, 2));
+      console.log(JSON.stringify({ spreadsheetUrl: url, tabs: 4 }, null, 2));
     } catch (e) {
       console.error("Google Sheets export failed, falling back to CSV:", e);
       const paths = writeToCsvFallback(data, outDirResolved, prefix, (h, r, p) =>

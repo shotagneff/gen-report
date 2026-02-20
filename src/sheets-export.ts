@@ -1,5 +1,5 @@
 /**
- * Google スプレッドシートに 4タブ＋前提条件・承認 を一括書き込み
+ * Google スプレッドシートに 4タブを一括書き込み
  * 環境変数 GOOGLE_APPLICATION_CREDENTIALS にサービスアカウントJSONのパスを指定する。
  */
 
@@ -14,17 +14,15 @@ import {
   packageToVisualRows,
   roadmapToSheetRows,
   roadmapToVisualRows,
-  premiseToSheetRows,
 } from "./build-four-tabs.js";
 import type { CostEffectVisualRow, PackageVisualRow, RoadmapVisualRow } from "./build-four-tabs.js";
-import type { CostEffectRow, PackageRow, RoadmapRow, PremiseRow } from "./types.js";
+import type { CostEffectRow, PackageRow, RoadmapRow } from "./types.js";
 
 const SHEET_TITLES = [
   "考えられる施策",
   "費用対効果など",
   "パッケージ",
   "ロードマップ",
-  "前提条件・承認",
 ] as const;
 
 function proposalToSheetRows(sheet: ProposalSheet): string[][] {
@@ -646,7 +644,6 @@ export interface FullSpreadsheetData {
   costEffect: CostEffectRow[];
   packages: PackageRow[];
   roadmap: RoadmapRow[];
-  premise: PremiseRow[];
 }
 
 /** 作成日プレフィックスを生成する（例: 2025年01月15日_） */
@@ -708,14 +705,12 @@ export async function writeToGoogleSheets(
   const costEffectVisual = costEffectToVisualRows(data.costEffect);
   const packageVisual = packageToVisualRows(data.packages);
   const roadmapVisual = roadmapToVisualRows(data.roadmap);
-  const premiseRows = premiseToSheetRows(data.premise);
 
   const allData = [
     proposalVisual.map((r) => r.row),
     costEffectVisual.map((r) => r.row),
     packageVisual.map((r) => r.row),
     roadmapVisual.map((r) => r.row),
-    premiseRows,
   ];
 
   const updates = SHEET_TITLES.map((sheetTitle, i) => ({
@@ -788,11 +783,6 @@ export function writeToCsvFallback(
   const roadmapPath = path.join(outDir, `${prefix}_ロードマップ.csv`);
   writeCsv(roadmapRows[0], roadmapRows.slice(1), roadmapPath);
   paths.push(roadmapPath);
-
-  const premiseRows = premiseToSheetRows(data.premise);
-  const premisePath = path.join(outDir, `${prefix}_前提条件・承認.csv`);
-  writeCsv(premiseRows[0], premiseRows.slice(1), premisePath);
-  paths.push(premisePath);
 
   return paths;
 }
