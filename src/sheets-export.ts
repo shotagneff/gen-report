@@ -649,8 +649,19 @@ export interface FullSpreadsheetData {
   premise: PremiseRow[];
 }
 
+/** 作成日プレフィックスを生成する（例: 2025年01月15日_） */
+function datePrefix(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}年${m}月${d}日_`;
+}
+
 /**
  * 1つのスプレッドシートを新規作成し、5シートにデータを書き込む。
+ * タイトル冒頭に作成日（YYYY年MM月DD日_）を自動付与する。
+ * GOOGLE_DRIVE_FOLDER_ID が設定されている場合は指定フォルダへ移動する。
  * @returns 作成したスプレッドシートのURL
  */
 export async function writeToGoogleSheets(
@@ -678,9 +689,12 @@ export async function writeToGoogleSheets(
 
   const sheets = google.sheets({ version: "v4", auth });
 
+  // 冒頭に作成日を付与
+  const titledWithDate = `${datePrefix()}${title}`;
+
   const createRes = await sheets.spreadsheets.create({
     requestBody: {
-      properties: { title },
+      properties: { title: titledWithDate },
       sheets: SHEET_TITLES.map((t) => ({ properties: { title: t } })),
     },
   });
@@ -728,6 +742,20 @@ export async function writeToGoogleSheets(
   }
   if (sheetIds.length > 3) {
     await applyRoadmapFormatting(sheets, spreadsheetId, sheetIds[3], roadmapVisual);
+  }
+
+  // 指定フォルダへ移動
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  if (folderId) {
+    const drive = google.drive({ version: "v3", auth });
+    const fileRes = await drive.files.get({ fileId: spreadsheetId, fields: "parents" });
+    const currentParents = fileRes.data.parents?.join(",") ?? "";
+    await drive.files.update({
+      fileId: spreadsheetId,
+      addParents: folderId,
+      removeParents: currentParents,
+      requestBody: {},
+    });
   }
 
   return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
