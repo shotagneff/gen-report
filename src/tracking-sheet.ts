@@ -13,7 +13,7 @@ import { datePrefix } from "./sheets-export.js";
 const TRACKING_SHEET_NAME = "リード管理CRM";
 const SHEET_TAB = "リスト";
 const HEADERS = ["作成日", "会社名", "ホームページURL", "住所", "電話番号", "レポートURL", "ステータス"];
-const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み"];
+const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み", "フォーム営業完了"];
 
 // チップ風スタイル（レポートURL列）
 const CHIP_BG   = { red: 0.788, green: 0.855, blue: 0.973 };
@@ -165,11 +165,6 @@ async function appendTrackingRow(
   tabTitle: string,
   row: TrackingRow,
 ): Promise<void> {
-  // レポートURLはHYPERLINKチップ形式
-  const urlFormula = row.reportUrl
-    ? `=HYPERLINK("${row.reportUrl}","📊 開く")`
-    : "";
-
   const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `'${tabTitle}'!A:G`,
@@ -182,7 +177,7 @@ async function appendTrackingRow(
         row.siteUrl,
         row.address,
         row.phone,
-        urlFormula,
+        row.reportUrl,
         row.status,
       ]],
     },
