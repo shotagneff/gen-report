@@ -198,12 +198,17 @@ async function appendTrackingRow(
     spreadsheetId,
     requestBody: {
       requests: [
-        // 行全体の背景色をクリア（白）
+        // 行全体の背景色を白・文字色を黒にリセット（ヘッダーの白文字が引き継がれないよう）
         {
           repeatCell: {
             range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: 7 },
-            cell: { userEnteredFormat: { backgroundColor: WHITE } },
-            fields: "userEnteredFormat.backgroundColor",
+            cell: {
+              userEnteredFormat: {
+                backgroundColor: WHITE,
+                textFormat: { foregroundColor: { red: 0, green: 0, blue: 0 }, bold: false },
+              },
+            },
+            fields: "userEnteredFormat(backgroundColor,textFormat)",
           },
         },
         // レポートURL列（F列 = index5）をチップ風スタイルに
