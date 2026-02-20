@@ -1,0 +1,23 @@
+{
+  "name": "company-ai-report",
+  "version": "0.1.0",
+  "description": "企業別AI活用レポートを瞬時に生成し、CSV/スプレッドシートで出力する",
+  "type": "module",
+  "scripts": {
+    "report": "tsx scripts/run-report.ts",
+    "report:example": "tsx scripts/run-report.ts --input inputs/example_company.json",
+    "proposal": "tsx scripts/run-proposal.ts",
+    "proposal:example": "tsx scripts/run-proposal.ts --input inputs/example_company.json",
+    "full": "tsx scripts/run-full-sheets.ts",
+    "full:example": "tsx scripts/run-full-sheets.ts --input inputs/example_company.json",
+    "gen": "tsx scripts/run-interactive.ts"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.3.0"
+  }
+}

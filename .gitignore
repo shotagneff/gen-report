@@ -1,0 +1,14 @@
+
+
+
+node_modules/
+dist/
+data/out/
+.env
+*.log
+# サービスアカウントJSONキー（Gitに上げない）
+keys/
+
+# OS
+.DS_Store
+Thumbs.db
