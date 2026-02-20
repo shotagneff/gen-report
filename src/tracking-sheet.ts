@@ -11,7 +11,15 @@ import type { drive_v3, sheets_v4 } from "googleapis";
 import { datePrefix } from "./sheets-export.js";
 
 const TRACKING_SHEET_NAME = "リード管理CRM";
+const SHEET_TAB = "リスト";
 const HEADERS = ["作成日", "会社名", "ホームページURL", "住所", "電話番号", "レポートURL", "ステータス"];
+const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み"];
+
+// チップ風スタイル（レポートURL列）
+const CHIP_BG   = { red: 0.788, green: 0.855, blue: 0.973 };
+const CHIP_TEXT = { red: 0.118, green: 0.227, blue: 0.376 };
+const HEADER_BG = { red: 0.118, green: 0.227, blue: 0.376 };
+const WHITE     = { red: 1,     green: 1,     blue: 1     };
 
 interface TrackingRow {
   date: string;
@@ -23,12 +31,12 @@ interface TrackingRow {
   status: string;
 }
 
-/** フォルダ内で管理シートを検索し、なければ新規作成してspreadsheetIdを返す */
+/** フォルダ内で管理シートを検索し、なければ新規作成して { spreadsheetId, sheetId, tabTitle } を返す */
 async function findOrCreateTrackingSheet(
   drive: drive_v3.Drive,
   sheets: sheets_v4.Sheets,
   folderId: string,
-): Promise<string> {
+): Promise<{ spreadsheetId: string; sheetId: number; tabTitle: string }> {
   // フォルダ内で管理シートを検索
   const listRes = await drive.files.list({
     q: `name='${TRACKING_SHEET_NAME}' and '${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
@@ -38,19 +46,27 @@ async function findOrCreateTrackingSheet(
 
   const existing = listRes.data.files?.[0];
   if (existing?.id) {
-    return existing.id;
+    // 既存シートの場合は最初のタブ名とsheetIdを取得して返す
+    const spreadsheetId = existing.id;
+    const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" });
+    const firstSheet = meta.data.sheets?.[0].properties;
+    const sheetId = firstSheet?.sheetId ?? 0;
+    const tabTitle = firstSheet?.title ?? SHEET_TAB;
+    return { spreadsheetId, sheetId, tabTitle };
   }
 
   // 新規作成
   const createRes = await sheets.spreadsheets.create({
     requestBody: {
       properties: { title: TRACKING_SHEET_NAME },
-      sheets: [{ properties: { title: "営業リスト" } }],
+      sheets: [{ properties: { title: SHEET_TAB } }],
     },
   });
 
   const spreadsheetId = createRes.data.spreadsheetId;
-  if (!spreadsheetId) throw new Error("トラッキングシートの作成に失敗しました");
+  if (!spreadsheetId) throw new Error("リード管理CRMの作成に失敗しました");
+
+  const sheetId = createRes.data.sheets?.[0].properties?.sheetId ?? 0;
 
   // 指定フォルダへ移動
   const fileRes = await drive.files.get({ fileId: spreadsheetId, fields: "parents" });
@@ -65,33 +81,32 @@ async function findOrCreateTrackingSheet(
   // ヘッダー行を書き込む
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: "'営業リスト'!A1",
+    range: `'${SHEET_TAB}'!A1`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [HEADERS] },
   });
 
-  // ヘッダー行のスタイルを設定（濃紺背景・白文字・太字・列幅）
-  const sheetId = createRes.data.sheets?.[0].properties?.sheetId ?? 0;
+  // ヘッダーのスタイル + ステータス列全体にドロップダウン設定
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
       requests: [
-        // ヘッダー背景色・文字色・太字
+        // ヘッダー背景色・文字色・太字・中央揃え
         {
           repeatCell: {
             range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: HEADERS.length },
             cell: {
               userEnteredFormat: {
-                backgroundColor: { red: 0.118, green: 0.227, blue: 0.376 },
-                textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
+                backgroundColor: HEADER_BG,
+                textFormat: { foregroundColor: WHITE, bold: true },
                 horizontalAlignment: "CENTER",
               },
             },
             fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
           },
         },
-        // 列幅設定
-        ...([200, 180, 220, 200, 130, 280, 120] as number[]).map((pixels, i) => ({
+        // 列幅設定: 作成日/会社名/URL/住所/電話/レポートURL/ステータス
+        ...([120, 180, 220, 200, 130, 120, 120] as number[]).map((pixels, i) => ({
           updateDimensionProperties: {
             range: { sheetId, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 },
             properties: { pixelSize: pixels },
@@ -106,7 +121,7 @@ async function findOrCreateTrackingSheet(
             fields: "pixelSize",
           },
         },
-        // 行の折り返し設定（ヘッダー）
+        // ヘッダー行折り返し
         {
           repeatCell: {
             range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
@@ -114,32 +129,50 @@ async function findOrCreateTrackingSheet(
             fields: "userEnteredFormat.wrapStrategy",
           },
         },
-        // ウィンドウ枠の固定（ヘッダー行を固定）
+        // ヘッダー行を固定
         {
           updateSheetProperties: {
-            properties: {
-              sheetId,
-              gridProperties: { frozenRowCount: 1 },
-            },
+            properties: { sheetId, gridProperties: { frozenRowCount: 1 } },
             fields: "gridProperties.frozenRowCount",
+          },
+        },
+        // ステータス列（G列 = index6）にドロップダウン（データ行全体に適用）
+        {
+          setDataValidation: {
+            range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 6, endColumnIndex: 7 },
+            rule: {
+              condition: {
+                type: "ONE_OF_LIST",
+                values: STATUS_OPTIONS.map((v) => ({ userEnteredValue: v })),
+              },
+              showCustomUi: true,
+              strict: false,
+            },
           },
         },
       ],
     },
   });
 
-  return spreadsheetId;
+  return { spreadsheetId, sheetId, tabTitle: SHEET_TAB };
 }
 
-/** トラッキングシートの末尾に1行追加する */
+/** トラッキングシートの末尾に1行追加してフォーマットを適用する */
 async function appendTrackingRow(
   sheets: sheets_v4.Sheets,
   spreadsheetId: string,
+  sheetId: number,
+  tabTitle: string,
   row: TrackingRow,
 ): Promise<void> {
-  await sheets.spreadsheets.values.append({
+  // レポートURLはHYPERLINKチップ形式
+  const urlFormula = row.reportUrl
+    ? `=HYPERLINK("${row.reportUrl}","📊 開く")`
+    : "";
+
+  const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: "'営業リスト'!A:G",
+    range: `'${tabTitle}'!A:G`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
@@ -149,9 +182,46 @@ async function appendTrackingRow(
         row.siteUrl,
         row.address,
         row.phone,
-        row.reportUrl,
+        urlFormula,
         row.status,
       ]],
+    },
+  });
+
+  // 追加された行のインデックスを取得（例: "リスト!A5:G5" → rowIndex=4）
+  const updatedRange = appendRes.data.updates?.updatedRange ?? "";
+  const match = updatedRange.match(/(\d+)(?::.*)?$/);
+  const rowIndex = match ? parseInt(match[1], 10) - 1 : -1;
+  if (rowIndex < 1) return; // ヘッダー行は変更しない
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        // 行全体の背景色をクリア（白）
+        {
+          repeatCell: {
+            range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: 7 },
+            cell: { userEnteredFormat: { backgroundColor: WHITE } },
+            fields: "userEnteredFormat.backgroundColor",
+          },
+        },
+        // レポートURL列（F列 = index5）をチップ風スタイルに
+        {
+          repeatCell: {
+            range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 5, endColumnIndex: 6 },
+            cell: {
+              userEnteredFormat: {
+                backgroundColor: CHIP_BG,
+                textFormat: { bold: true, foregroundColor: CHIP_TEXT },
+                horizontalAlignment: "CENTER",
+                verticalAlignment: "MIDDLE",
+              },
+            },
+            fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+          },
+        },
+      ],
     },
   });
 }
@@ -185,12 +255,11 @@ export async function updateTracking(args: {
   const drive = google.drive({ version: "v3", auth });
   const sheets = google.sheets({ version: "v4", auth });
 
-  const spreadsheetId = await findOrCreateTrackingSheet(drive, sheets, args.folderId);
+  const { spreadsheetId, sheetId, tabTitle } = await findOrCreateTrackingSheet(drive, sheets, args.folderId);
 
-  // 末尾の "_" を除いた日付文字列（例: "2026年02月21日"）
   const date = datePrefix().replace(/_$/, "");
 
-  await appendTrackingRow(sheets, spreadsheetId, {
+  await appendTrackingRow(sheets, spreadsheetId, sheetId, tabTitle, {
     date,
     companyName: args.companyName,
     siteUrl: args.siteUrl,
