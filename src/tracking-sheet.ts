@@ -1,6 +1,6 @@
 /**
- * 営業管理トラッキングシート
- * レポート生成のたびに指定フォルダ内の「【AIレポート管理】営業リスト」に1行追加する。
+ * リード管理CRM
+ * レポート生成のたびに指定フォルダ内の「リード管理CRM」に1行追加する。
  * 初回実行時はシートを自動作成する。
  */
 
@@ -10,7 +10,7 @@ import { google } from "googleapis";
 import type { drive_v3, sheets_v4 } from "googleapis";
 import { datePrefix } from "./sheets-export.js";
 
-const TRACKING_SHEET_NAME = "【AIレポート管理】営業リスト";
+const TRACKING_SHEET_NAME = "リード管理CRM";
 const HEADERS = ["作成日", "会社名", "ホームページURL", "住所", "電話番号", "レポートURL", "ステータス"];
 
 interface TrackingRow {
