@@ -13,8 +13,9 @@
 // ==================== 設定 ====================
 
 const CONFIG = {
-  // 検索クエリ（フォーム営業への返信を検出）
-  GMAIL_QUERY: 'subject:"Re:" is:unread -label:処理済み',
+  // 検索クエリ（フォーム営業への返信のみを検出）
+  // 件名に「AI活用レポート」を含む返信メールに限定
+  GMAIL_QUERY: 'subject:"Re:" subject:"AI活用レポート" is:unread -label:処理済み',
   MAX_THREADS: 20,
   MAX_BODY_LENGTH: 800, // APIコスト管理のため冒頭800文字のみ送信
   PROCESSED_LABEL: "処理済み",
@@ -197,13 +198,14 @@ function findCompanyRow(sheet, companyName) {
   if (lastRow <= 1) return -1;
 
   const companyCol = sheet.getRange(2, CONFIG.COL.COMPANY + 1, lastRow - 1, 1).getValues();
+  let lastMatch = -1;
   for (let i = 0; i < companyCol.length; i++) {
     const cell = String(companyCol[i][0]);
     if (cell.includes(companyName) || companyName.includes(cell)) {
-      return i + 2; // 1-indexed, ヘッダー分+1
+      lastMatch = i + 2; // 1-indexed, ヘッダー分+1（最後にマッチした行を使う）
     }
   }
-  return -1;
+  return lastMatch;
 }
 
 /**
