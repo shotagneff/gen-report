@@ -33,13 +33,14 @@ function loadDotenv(): void {
   }
 }
 
-function parseArgs(argv: string[]): { companyName: string; status: string; outreachMessage: string } {
+function parseArgs(argv: string[]): { companyName: string; status: string; skipStatus: boolean; outreachMessage: string } {
   let companyName = "";
   let status = "アプローチ済み";
+  let skipStatus = true; // デフォルトはステータス更新しない
   let outreachMessage = "";
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--company-name" && argv[i + 1]) companyName = argv[++i];
-    else if (argv[i] === "--status" && argv[i + 1]) status = argv[++i];
+    else if (argv[i] === "--status" && argv[i + 1]) { status = argv[++i]; skipStatus = false; }
     else if (argv[i] === "--outreach-message" && argv[i + 1]) outreachMessage = argv[++i];
     else if (argv[i] === "-h" || argv[i] === "--help") {
       console.log(`
@@ -54,12 +55,12 @@ Usage: npx tsx scripts/update-crm-status.ts --company-name <name> [--status <sta
       process.exit(0);
     }
   }
-  return { companyName, status, outreachMessage };
+  return { companyName, status, skipStatus, outreachMessage };
 }
 
 async function main(): Promise<void> {
   loadDotenv();
-  const { companyName, status, outreachMessage } = parseArgs(process.argv.slice(2));
+  const { companyName, status, skipStatus, outreachMessage } = parseArgs(process.argv.slice(2));
 
   if (!companyName) {
     console.error("Error: --company-name is required");
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
   // 全データを読み取り
   const dataRes = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${tabTitle}'!A:H`,
+    range: `'${tabTitle}'!A:N`,
   });
 
   const rows = dataRes.data.values ?? [];
@@ -136,15 +137,16 @@ async function main(): Promise<void> {
   const matchedName = rows[matchRow][1];
   const statusRange = `'${tabTitle}'!H${matchRow + 1}`;
 
-  // ステータスを更新
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: statusRange,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[status]] },
-  });
-
-  console.error(`✅ 「${matchedName}」のステータスを「${status}」に更新しました（行: ${matchRow + 1}）`);
+  // ステータスを更新（--status が明示指定された場合のみ）
+  if (!skipStatus) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: statusRange,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [[status]] },
+    });
+    console.error(`✅ 「${matchedName}」のステータスを「${status}」に更新しました（行: ${matchRow + 1}）`);
+  }
 
   // フォーム営業文を更新（指定された場合）
   if (outreachMessage) {

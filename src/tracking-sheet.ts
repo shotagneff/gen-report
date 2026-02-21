@@ -12,8 +12,18 @@ import { datePrefix } from "./sheets-export.js";
 
 const TRACKING_SHEET_NAME = "リード管理CRM";
 const SHEET_TAB = "リスト";
-const HEADERS = ["作成日", "会社名", "ホームページURL", "住所", "電話番号", "レポートURL", "フォーム営業文", "ステータス"];
-const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み", "フォーム営業完了"];
+const HEADERS = [
+  "作成日", "会社名", "ホームページURL", "住所", "電話番号",
+  "レポートURL", "フォーム営業文", "ステータス",
+  "スコア", "ランク", "スコアリング日", "接触経路", "反応メモ", "推奨アクション",
+];
+const COL_COUNT = HEADERS.length; // 14
+const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み", "フォーム営業完了", "Aランク対応中", "ナーチャリング中", "3ヶ月後フォロー"];
+const RANK_OPTIONS = ["A", "B", "C"];
+const CONTACT_PATH_OPTIONS = ["フォーム", "テレアポ", "訪問", "メール返信", "その他"];
+
+// 列幅: A〜N
+const COL_WIDTHS = [120, 180, 220, 200, 130, 120, 300, 120, 80, 60, 120, 120, 300, 300];
 
 // チップ風スタイル（レポートURL列）
 const CHIP_BG   = { red: 0.788, green: 0.855, blue: 0.973 };
@@ -30,9 +40,15 @@ interface TrackingRow {
   reportUrl: string;
   outreachMessage: string;
   status: string;
+  score?: string;
+  rank?: string;
+  scoringDate?: string;
+  contactPath?: string;
+  responseNotes?: string;
+  recommendedAction?: string;
 }
 
-/** 既存CRMのヘッダーが旧形式（7列: ステータスがG列）なら新形式（8列: フォーム営業文G列+ステータスH列）にマイグレーションする */
+/** 既存CRMのヘッダーを最新形式にマイグレーションする */
 async function migrateHeadersIfNeeded(
   sheets: sheets_v4.Sheets,
   spreadsheetId: string,
@@ -41,13 +57,13 @@ async function migrateHeadersIfNeeded(
 ): Promise<void> {
   const headerRes = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${tabTitle}'!A1:H1`,
+    range: `'${tabTitle}'!A1:N1`,
   });
   const currentHeaders = headerRes.data.values?.[0] ?? [];
 
-  // 旧形式の判定: 7列で、G列が「ステータス」になっている
+  // 旧形式1: 7列（ステータスがG列）→ 14列
   if (currentHeaders.length === 7 && currentHeaders[6] === "ステータス") {
-    // 1. G列（ステータス）の前に列を挿入
+    // G列（ステータス）の前に列を挿入
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: {
@@ -62,7 +78,7 @@ async function migrateHeadersIfNeeded(
       },
     });
 
-    // 2. 新G列のヘッダーを「フォーム営業文」に設定
+    // 新G列のヘッダーを「フォーム営業文」に設定
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `'${tabTitle}'!G1`,
@@ -70,15 +86,30 @@ async function migrateHeadersIfNeeded(
       requestBody: { values: [["フォーム営業文"]] },
     });
 
-    // 3. 新G列のヘッダースタイルを適用
+    // 現在8列になったので、以下の8列→14列マイグレーションに落ちる
+    currentHeaders.splice(6, 0, "フォーム営業文");
+  }
+
+  // 旧形式2: 8列（フォーム営業文G列+ステータスH列）→ 14列
+  if (currentHeaders.length === 8 && currentHeaders[7] === "ステータス") {
+    // I〜N列のヘッダーを追加
+    const newHeaders = HEADERS.slice(8); // ["スコア", "ランク", "スコアリング日", "接触経路", "反応メモ", "推奨アクション"]
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${tabTitle}'!I1`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [newHeaders] },
+    });
+
+    // スタイルとバリデーションを適用
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: {
         requests: [
-          // G列ヘッダーのスタイル
+          // I〜N列ヘッダーのスタイル
           {
             repeatCell: {
-              range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 6, endColumnIndex: 7 },
+              range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 8, endColumnIndex: COL_COUNT },
               cell: {
                 userEnteredFormat: {
                   backgroundColor: HEADER_BG,
@@ -89,15 +120,15 @@ async function migrateHeadersIfNeeded(
               fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
             },
           },
-          // G列の幅を300pxに
-          {
+          // I〜N列の列幅
+          ...COL_WIDTHS.slice(8).map((pixels, i) => ({
             updateDimensionProperties: {
-              range: { sheetId, dimension: "COLUMNS", startIndex: 6, endIndex: 7 },
-              properties: { pixelSize: 300 },
+              range: { sheetId, dimension: "COLUMNS", startIndex: 8 + i, endIndex: 9 + i },
+              properties: { pixelSize: pixels },
               fields: "pixelSize",
             },
-          },
-          // ステータス列のドロップダウンをH列（index7）に再設定
+          })),
+          // ステータス列（H列）のドロップダウンを拡張ステータスで更新
           {
             setDataValidation: {
               range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 7, endColumnIndex: 8 },
@@ -105,6 +136,34 @@ async function migrateHeadersIfNeeded(
                 condition: {
                   type: "ONE_OF_LIST",
                   values: STATUS_OPTIONS.map((v) => ({ userEnteredValue: v })),
+                },
+                showCustomUi: true,
+                strict: false,
+              },
+            },
+          },
+          // J列（ランク）にA/B/Cドロップダウン
+          {
+            setDataValidation: {
+              range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 9, endColumnIndex: 10 },
+              rule: {
+                condition: {
+                  type: "ONE_OF_LIST",
+                  values: RANK_OPTIONS.map((v) => ({ userEnteredValue: v })),
+                },
+                showCustomUi: true,
+                strict: false,
+              },
+            },
+          },
+          // L列（接触経路）にドロップダウン
+          {
+            setDataValidation: {
+              range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 11, endColumnIndex: 12 },
+              rule: {
+                condition: {
+                  type: "ONE_OF_LIST",
+                  values: CONTACT_PATH_OPTIONS.map((v) => ({ userEnteredValue: v })),
                 },
                 showCustomUi: true,
                 strict: false,
@@ -139,7 +198,7 @@ async function findOrCreateTrackingSheet(
     const sheetId = firstSheet?.sheetId ?? 0;
     const tabTitle = firstSheet?.title ?? SHEET_TAB;
 
-    // ヘッダーの自動マイグレーション: 旧7列→新8列
+    // ヘッダーの自動マイグレーション
     await migrateHeadersIfNeeded(sheets, spreadsheetId, sheetId, tabTitle);
 
     return { spreadsheetId, sheetId, tabTitle };
@@ -176,7 +235,7 @@ async function findOrCreateTrackingSheet(
     requestBody: { values: [HEADERS] },
   });
 
-  // ヘッダーのスタイル + ステータス列全体にドロップダウン設定
+  // ヘッダーのスタイル + ドロップダウン設定
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
@@ -184,7 +243,7 @@ async function findOrCreateTrackingSheet(
         // ヘッダー背景色・文字色・太字・中央揃え
         {
           repeatCell: {
-            range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: HEADERS.length },
+            range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: COL_COUNT },
             cell: {
               userEnteredFormat: {
                 backgroundColor: HEADER_BG,
@@ -195,8 +254,8 @@ async function findOrCreateTrackingSheet(
             fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
           },
         },
-        // 列幅設定: 作成日/会社名/URL/住所/電話/レポートURL/フォーム営業文/ステータス
-        ...([120, 180, 220, 200, 130, 120, 300, 120] as number[]).map((pixels, i) => ({
+        // 列幅設定
+        ...COL_WIDTHS.map((pixels, i) => ({
           updateDimensionProperties: {
             range: { sheetId, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 },
             properties: { pixelSize: pixels },
@@ -226,7 +285,7 @@ async function findOrCreateTrackingSheet(
             fields: "gridProperties.frozenRowCount",
           },
         },
-        // ステータス列（H列 = index7）にドロップダウン（データ行全体に適用）
+        // ステータス列（H列 = index7）にドロップダウン
         {
           setDataValidation: {
             range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 7, endColumnIndex: 8 },
@@ -234,6 +293,34 @@ async function findOrCreateTrackingSheet(
               condition: {
                 type: "ONE_OF_LIST",
                 values: STATUS_OPTIONS.map((v) => ({ userEnteredValue: v })),
+              },
+              showCustomUi: true,
+              strict: false,
+            },
+          },
+        },
+        // ランク列（J列 = index9）にA/B/Cドロップダウン
+        {
+          setDataValidation: {
+            range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 9, endColumnIndex: 10 },
+            rule: {
+              condition: {
+                type: "ONE_OF_LIST",
+                values: RANK_OPTIONS.map((v) => ({ userEnteredValue: v })),
+              },
+              showCustomUi: true,
+              strict: false,
+            },
+          },
+        },
+        // 接触経路列（L列 = index11）にドロップダウン
+        {
+          setDataValidation: {
+            range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 11, endColumnIndex: 12 },
+            rule: {
+              condition: {
+                type: "ONE_OF_LIST",
+                values: CONTACT_PATH_OPTIONS.map((v) => ({ userEnteredValue: v })),
               },
               showCustomUi: true,
               strict: false,
@@ -257,7 +344,7 @@ async function appendTrackingRow(
 ): Promise<void> {
   const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `'${tabTitle}'!A:H`,
+    range: `'${tabTitle}'!A:N`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
@@ -270,11 +357,17 @@ async function appendTrackingRow(
         row.reportUrl,
         row.outreachMessage,
         row.status,
+        row.score ?? "",
+        row.rank ?? "",
+        row.scoringDate ?? "",
+        row.contactPath ?? "",
+        row.responseNotes ?? "",
+        row.recommendedAction ?? "",
       ]],
     },
   });
 
-  // 追加された行のインデックスを取得（例: "リスト!A5:G5" → rowIndex=4）
+  // 追加された行のインデックスを取得
   const updatedRange = appendRes.data.updates?.updatedRange ?? "";
   const match = updatedRange.match(/(\d+)(?::.*)?$/);
   const rowIndex = match ? parseInt(match[1], 10) - 1 : -1;
@@ -287,7 +380,7 @@ async function appendTrackingRow(
         // 行全体の背景色を白・文字色を黒にリセット（ヘッダーの白文字が引き継がれないよう）
         {
           repeatCell: {
-            range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: 8 },
+            range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: COL_COUNT },
             cell: {
               userEnteredFormat: {
                 backgroundColor: WHITE,
