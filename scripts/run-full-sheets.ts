@@ -113,10 +113,12 @@ async function main(): Promise<void> {
   const outDirResolved = path.resolve(repoRoot, outDir);
 
   const hasCreds = !!process.env.GOOGLE_APPLICATION_CREDENTIALS && sheets;
+  let reportUrl = "";
 
   if (hasCreds) {
     try {
       const url = await writeToGoogleSheets(`${proposal.companyName}御中_AIエージェント活用レポート`, data);
+      reportUrl = url;
       console.error("Created spreadsheet:", url);
       console.log(JSON.stringify({ spreadsheetUrl: url, tabs: 4 }, null, 2));
 
@@ -126,7 +128,7 @@ async function main(): Promise<void> {
       if (folderId && keyPath) {
         try {
           const siteUrl = raw.officialInfo.type === "url" ? raw.officialInfo.value : "";
-          const { address, phone } = await extractContactInfo(input.officialInfo.value);
+          const { address, phone } = await extractContactInfo(input.officialInfo.value, siteUrl, proposal.companyName);
           await updateTracking({ companyName: proposal.companyName, siteUrl, address, phone, reportUrl: url, folderId, credentialsPath: keyPath });
           console.error("✅ 営業リストに追記しました");
         } catch (e) {
@@ -148,6 +150,35 @@ async function main(): Promise<void> {
     console.error("Saved CSV (set GOOGLE_APPLICATION_CREDENTIALS for Sheets):", paths.join(", "));
     console.log(JSON.stringify({ csvPaths: paths }, null, 2));
   }
+
+  // sales-outreach用キャッシュJSONを保存
+  if (!fs.existsSync(outDirResolved)) fs.mkdirSync(outDirResolved, { recursive: true });
+  const outreachData = {
+    companyName: proposal.companyName,
+    industry: profile.industry,
+    businessSummary: profile.businessSummary,
+    keywords: profile.keywords,
+    focusAreas: profile.focusAreas,
+    siteUrl: raw.officialInfo.type === "url" ? raw.officialInfo.value : "",
+    reportUrl,
+    initiatives: costEffect.map(c => ({
+      name: c.measure,
+      monthlyEffectYen: c.monthlyEffectYen,
+      yearlyEffectYen: c.yearlyEffectYen,
+      effectType: c.effectType,
+      kpi: c.kpi,
+    })),
+    topPackage: packages[0] ? {
+      packageName: packages[0].packageName,
+      content: packages[0].content,
+      benefit: packages[0].benefit,
+      monthlyEffectYen: packages[0].monthlyEffectYen,
+      paybackMonths: packages[0].paybackMonths,
+    } : null,
+  };
+  const outreachPath = path.join(outDirResolved, `${prefix}_outreach-data.json`);
+  fs.writeFileSync(outreachPath, JSON.stringify(outreachData, null, 2), "utf8");
+  console.error("Saved outreach data:", outreachPath);
 }
 
 main().catch((err) => {

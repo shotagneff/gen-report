@@ -12,7 +12,7 @@ import { datePrefix } from "./sheets-export.js";
 
 const TRACKING_SHEET_NAME = "リード管理CRM";
 const SHEET_TAB = "リスト";
-const HEADERS = ["作成日", "会社名", "ホームページURL", "住所", "電話番号", "レポートURL", "ステータス"];
+const HEADERS = ["作成日", "会社名", "ホームページURL", "住所", "電話番号", "レポートURL", "フォーム営業文", "ステータス"];
 const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み", "フォーム営業完了"];
 
 // チップ風スタイル（レポートURL列）
@@ -28,7 +28,93 @@ interface TrackingRow {
   address: string;
   phone: string;
   reportUrl: string;
+  outreachMessage: string;
   status: string;
+}
+
+/** 既存CRMのヘッダーが旧形式（7列: ステータスがG列）なら新形式（8列: フォーム営業文G列+ステータスH列）にマイグレーションする */
+async function migrateHeadersIfNeeded(
+  sheets: sheets_v4.Sheets,
+  spreadsheetId: string,
+  sheetId: number,
+  tabTitle: string,
+): Promise<void> {
+  const headerRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabTitle}'!A1:H1`,
+  });
+  const currentHeaders = headerRes.data.values?.[0] ?? [];
+
+  // 旧形式の判定: 7列で、G列が「ステータス」になっている
+  if (currentHeaders.length === 7 && currentHeaders[6] === "ステータス") {
+    // 1. G列（ステータス）の前に列を挿入
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            insertDimension: {
+              range: { sheetId, dimension: "COLUMNS", startIndex: 6, endIndex: 7 },
+              inheritFromBefore: false,
+            },
+          },
+        ],
+      },
+    });
+
+    // 2. 新G列のヘッダーを「フォーム営業文」に設定
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${tabTitle}'!G1`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [["フォーム営業文"]] },
+    });
+
+    // 3. 新G列のヘッダースタイルを適用
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          // G列ヘッダーのスタイル
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 6, endColumnIndex: 7 },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: HEADER_BG,
+                  textFormat: { foregroundColor: WHITE, bold: true },
+                  horizontalAlignment: "CENTER",
+                },
+              },
+              fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
+            },
+          },
+          // G列の幅を300pxに
+          {
+            updateDimensionProperties: {
+              range: { sheetId, dimension: "COLUMNS", startIndex: 6, endIndex: 7 },
+              properties: { pixelSize: 300 },
+              fields: "pixelSize",
+            },
+          },
+          // ステータス列のドロップダウンをH列（index7）に再設定
+          {
+            setDataValidation: {
+              range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 7, endColumnIndex: 8 },
+              rule: {
+                condition: {
+                  type: "ONE_OF_LIST",
+                  values: STATUS_OPTIONS.map((v) => ({ userEnteredValue: v })),
+                },
+                showCustomUi: true,
+                strict: false,
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
 }
 
 /** フォルダ内で管理シートを検索し、なければ新規作成して { spreadsheetId, sheetId, tabTitle } を返す */
@@ -52,6 +138,10 @@ async function findOrCreateTrackingSheet(
     const firstSheet = meta.data.sheets?.[0].properties;
     const sheetId = firstSheet?.sheetId ?? 0;
     const tabTitle = firstSheet?.title ?? SHEET_TAB;
+
+    // ヘッダーの自動マイグレーション: 旧7列→新8列
+    await migrateHeadersIfNeeded(sheets, spreadsheetId, sheetId, tabTitle);
+
     return { spreadsheetId, sheetId, tabTitle };
   }
 
@@ -105,8 +195,8 @@ async function findOrCreateTrackingSheet(
             fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
           },
         },
-        // 列幅設定: 作成日/会社名/URL/住所/電話/レポートURL/ステータス
-        ...([120, 180, 220, 200, 130, 120, 120] as number[]).map((pixels, i) => ({
+        // 列幅設定: 作成日/会社名/URL/住所/電話/レポートURL/フォーム営業文/ステータス
+        ...([120, 180, 220, 200, 130, 120, 300, 120] as number[]).map((pixels, i) => ({
           updateDimensionProperties: {
             range: { sheetId, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 },
             properties: { pixelSize: pixels },
@@ -136,10 +226,10 @@ async function findOrCreateTrackingSheet(
             fields: "gridProperties.frozenRowCount",
           },
         },
-        // ステータス列（G列 = index6）にドロップダウン（データ行全体に適用）
+        // ステータス列（H列 = index7）にドロップダウン（データ行全体に適用）
         {
           setDataValidation: {
-            range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 6, endColumnIndex: 7 },
+            range: { sheetId, startRowIndex: 1, endRowIndex: 10000, startColumnIndex: 7, endColumnIndex: 8 },
             rule: {
               condition: {
                 type: "ONE_OF_LIST",
@@ -167,7 +257,7 @@ async function appendTrackingRow(
 ): Promise<void> {
   const appendRes = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `'${tabTitle}'!A:G`,
+    range: `'${tabTitle}'!A:H`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
@@ -178,6 +268,7 @@ async function appendTrackingRow(
         row.address,
         row.phone,
         row.reportUrl,
+        row.outreachMessage,
         row.status,
       ]],
     },
@@ -196,7 +287,7 @@ async function appendTrackingRow(
         // 行全体の背景色を白・文字色を黒にリセット（ヘッダーの白文字が引き継がれないよう）
         {
           repeatCell: {
-            range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: 7 },
+            range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: 8 },
             cell: {
               userEnteredFormat: {
                 backgroundColor: WHITE,
@@ -233,6 +324,7 @@ export async function updateTracking(args: {
   address: string;
   phone: string;
   reportUrl: string;
+  outreachMessage?: string;
   folderId: string;
   credentialsPath: string;
 }): Promise<void> {
@@ -266,6 +358,7 @@ export async function updateTracking(args: {
     address: args.address,
     phone: args.phone,
     reportUrl: args.reportUrl,
+    outreachMessage: args.outreachMessage ?? "",
     status: "未アプローチ",
   });
 }

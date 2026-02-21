@@ -133,9 +133,13 @@ export function writeProposalCsv(
 }
 
 export function safeFilePrefix(companyName: string): string {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
   const slug = companyName
     .replace(/\s+/g, "_")
     .replace(/[^\w\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\-_]/g, "")
-    .slice(0, 40);
-  return slug || "company";
+    .slice(0, 40) || "company";
+  return `${yy}_${mm}_${dd}_${slug}御中_AIエージェント活用レポート`;
 }

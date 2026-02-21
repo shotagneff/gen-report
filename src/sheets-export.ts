@@ -646,13 +646,13 @@ export interface FullSpreadsheetData {
   roadmap: RoadmapRow[];
 }
 
-/** 作成日プレフィックスを生成する（例: 2025年01月15日_） */
+/** 作成日プレフィックスを生成する（例: 26_02_21_） */
 export function datePrefix(): string {
   const now = new Date();
-  const y = now.getFullYear();
+  const yy = String(now.getFullYear()).slice(-2);
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
-  return `${y}年${m}月${d}日_`;
+  return `${yy}_${m}_${d}_`;
 }
 
 /**
@@ -739,8 +739,8 @@ export async function writeToGoogleSheets(
     await applyRoadmapFormatting(sheets, spreadsheetId, sheetIds[3], roadmapVisual);
   }
 
-  // 指定フォルダへ移動
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  // 指定フォルダへ移動（レポート用フォルダを優先、未設定なら共通フォルダ）
+  const folderId = process.env.GOOGLE_DRIVE_REPORT_FOLDER_ID || process.env.GOOGLE_DRIVE_FOLDER_ID;
   if (folderId) {
     const drive = google.drive({ version: "v3", auth });
     const fileRes = await drive.files.get({ fileId: spreadsheetId, fields: "parents" });

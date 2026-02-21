@@ -94,12 +94,70 @@ export async function buildProfile(input: CompanyInput): Promise<CompanyProfile>
 /** Agent: 住所・電話番号を抽出する */
 export async function extractContactInfo(
   text: string,
+  siteUrl?: string,
+  companyName?: string,
+): Promise<{ address: string; phone: string }> {
+  // まずメインテキストから抽出を試みる
+  let combined = text.slice(0, 4000);
+
+  // URLが渡された場合、会社概要ページも取得して情報を補完する
+  if (siteUrl) {
+    const baseUrl = siteUrl.replace(/\/+$/, "");
+    const companyPaths = ["/company", "/about", "/corporate", "/outline"];
+    for (const p of companyPaths) {
+      try {
+        const pageText = await fetchUrlAsText(`${baseUrl}${p}`);
+        if (pageText && pageText.length > 100) {
+          combined = `${combined}\n\n--- 会社概要ページ ---\n${pageText.slice(0, 4000)}`;
+          break;
+        }
+      } catch {
+        // 存在しないパスはスキップ
+      }
+    }
+  }
+
+  let result = await extractContactFromText(combined);
+
+  // サイトから取得できなかった場合、DuckDuckGoで補完
+  if ((!result.address || !result.phone) && companyName) {
+    try {
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(companyName + " 住所 電話番号")}`;
+      const res = await fetch(ddgUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+      });
+      if (res.ok) {
+        const html = await res.text();
+        const searchText = html
+          .replace(/<script[\s\S]*?<\/script>/gi, "")
+          .replace(/<style[\s\S]*?<\/style>/gi, "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (searchText.length > 200) {
+          const searchResult = await extractContactFromText(
+            `会社名: ${companyName}\n\n--- Web検索結果 ---\n${searchText.slice(0, 6000)}`
+          );
+          if (!result.address && searchResult.address) result.address = searchResult.address;
+          if (!result.phone && searchResult.phone) result.phone = searchResult.phone;
+        }
+      }
+    } catch {
+      // 検索失敗はスキップ
+    }
+  }
+
+  return result;
+}
+
+async function extractContactFromText(
+  text: string,
 ): Promise<{ address: string; phone: string }> {
   const userPrompt = `以下のテキストから会社の住所と代表電話番号を1つずつ抽出してください。
 見つからない場合は空文字にしてください。
 JSON形式のみを返してください（説明不要）。
 
-${text.slice(0, 4000)}
+${text}
 
 {"address":"...","phone":"..."}`;
 
