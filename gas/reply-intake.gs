@@ -14,12 +14,11 @@
 
 const CONFIG = {
   // 検索クエリ（フォーム営業への返信のみを検出）
-  // 件名に「AI活用レポート」を含む返信メールに限定
   GMAIL_QUERY: 'subject:"Re:" subject:"AI活用レポート" is:unread -label:処理済み',
   MAX_THREADS: 20,
-  MAX_BODY_LENGTH: 800, // APIコスト管理のため冒頭800文字のみ送信
+  MAX_BODY_LENGTH: 800,
   PROCESSED_LABEL: "処理済み",
-  // CRM列マッピング（0-indexed）
+  // CRM列マッピング（0-indexed） 22列
   COL: {
     DATE: 0,        // A: 作成日
     COMPANY: 1,     // B: 会社名
@@ -35,7 +34,16 @@ const CONFIG = {
     CONTACT_PATH: 11, // L: 接触経路
     RESPONSE_NOTES: 12, // M: 反応メモ
     ACTION: 13,     // N: 推奨アクション
+    PIPELINE: 14,   // O: パイプライン
+    DEAL_AMOUNT: 15, // P: ディール金額
+    WIN_PROB: 16,   // Q: 受注確度(%)
+    EXPECTED_CLOSE: 17, // R: 予想受注日
+    CONTACT_NAME: 18, // S: 担当者名
+    CONTACT_EMAIL: 19, // T: 担当者メール
+    CONTACT_DEPT: 20, // U: 担当者部署
+    LAST_CONTACT: 21, // V: 最終接触日
   },
+  TOTAL_COLS: 22,
 };
 
 // ==================== メイン処理 ====================
@@ -79,7 +87,7 @@ function processThread(thread, sheet, processedLabel) {
   const body = latestMsg.getPlainBody().substring(0, CONFIG.MAX_BODY_LENGTH);
   const receivedDate = latestMsg.getDate();
 
-  // 件名から元の送付先企業を特定（「Re: 株式会社〇〇様向けに...」のパターン）
+  // 件名から元の送付先企業を特定
   const companyFromSubject = extractCompanyFromSubject(subject);
 
   // CRM内で該当企業を検索
@@ -89,13 +97,27 @@ function processThread(thread, sheet, processedLabel) {
   const analysis = analyzeReplyWithAI(senderName, emailAddr, body, subject);
 
   if (matchRow > 0) {
-    // 既存行のI〜N列を更新
+    // 既存行のスコアリング列を更新
     updateExistingRow(sheet, matchRow, analysis, emailAddr, receivedDate);
     Logger.log(`✅ 既存リード更新: ${companyFromSubject}（行${matchRow}）→ ランク${analysis.rank}`);
   } else {
     // 新規行として追加
     appendNewRow(sheet, analysis, emailAddr, senderName, receivedDate, body);
     Logger.log(`✅ 新規リード追加: ${analysis.company} → ランク${analysis.rank}`);
+  }
+
+  // アクティビティを記録
+  try {
+    logActivity(
+      analysis.company || companyFromSubject || senderName,
+      "メール返信受信",
+      analysis.person || senderName,
+      `件名: ${subject} / 温度: ${analysis.temperature}`,
+      analysis.challenge || "",
+      "自動"
+    );
+  } catch (e) {
+    Logger.log(`アクティビティ記録失敗: ${e.message}`);
   }
 
   // 処理済みラベルを付与
@@ -157,7 +179,7 @@ ${body}
 
   const text = result.content[0].text.trim();
 
-  // JSON部分を抽出（```json ... ``` で囲まれている場合にも対応）
+  // JSON部分を抽出
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error(`AI応答からJSONを抽出できませんでした: ${text.substring(0, 200)}`);
@@ -169,7 +191,7 @@ ${body}
 // ==================== CRM操作 ====================
 
 /**
- * CRMシートを取得（タブ名はスクリプトプロパティまたはデフォルト「リスト」）
+ * CRMシートを取得
  */
 function getOrCreateSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -178,18 +200,16 @@ function getOrCreateSheet() {
 }
 
 /**
- * 件名から企業名を抽出（「Re: 株式会社SEEKAD様向けに、AI活用レポート...」→ 「株式会社SEEKAD」）
+ * 件名から企業名を抽出
  */
 function extractCompanyFromSubject(subject) {
-  // "Re: " を除去
   const cleaned = subject.replace(/^Re:\s*/i, "").trim();
-  // "〇〇様向けに" パターン
   const match = cleaned.match(/^(.+?)様/);
   return match ? match[1] : "";
 }
 
 /**
- * CRM内でB列（会社名）を検索し、一致する行番号（1-indexed）を返す
+ * CRM内でB列（会社名）を検索し、最後にマッチした行番号（1-indexed）を返す
  */
 function findCompanyRow(sheet, companyName) {
   if (!companyName) return -1;
@@ -202,14 +222,14 @@ function findCompanyRow(sheet, companyName) {
   for (let i = 0; i < companyCol.length; i++) {
     const cell = String(companyCol[i][0]);
     if (cell.includes(companyName) || companyName.includes(cell)) {
-      lastMatch = i + 2; // 1-indexed, ヘッダー分+1（最後にマッチした行を使う）
+      lastMatch = i + 2;
     }
   }
   return lastMatch;
 }
 
 /**
- * 既存行のスコアリング列（I〜N）を更新
+ * 既存行のスコアリング列（I〜N）+ 担当者情報（S〜U）+ 最終接触日（V）を更新
  */
 function updateExistingRow(sheet, rowNum, analysis, emailAddr, receivedDate) {
   const col = CONFIG.COL;
@@ -234,7 +254,28 @@ function updateExistingRow(sheet, rowNum, analysis, emailAddr, receivedDate) {
   // N列: 推奨アクション
   sheet.getRange(rowNum, col.ACTION + 1).setValue(analysis.next_action || "");
 
-  // H列: ステータス更新（ランクに応じて）
+  // O列: パイプライン（ランクに応じて自動設定）
+  const pipelineMap = { A: "商談", B: "アプローチ中", C: "リード" };
+  if (pipelineMap[analysis.rank]) {
+    sheet.getRange(rowNum, col.PIPELINE + 1).setValue(pipelineMap[analysis.rank]);
+  }
+
+  // S列: 担当者名
+  if (analysis.person) {
+    sheet.getRange(rowNum, col.CONTACT_NAME + 1).setValue(analysis.person);
+  }
+  // T列: 担当者メール
+  if (emailAddr) {
+    sheet.getRange(rowNum, col.CONTACT_EMAIL + 1).setValue(emailAddr);
+  }
+  // U列: 担当者部署
+  if (analysis.department) {
+    sheet.getRange(rowNum, col.CONTACT_DEPT + 1).setValue(analysis.department);
+  }
+  // V列: 最終接触日
+  sheet.getRange(rowNum, col.LAST_CONTACT + 1).setValue(dateStr);
+
+  // H列: ステータス更新
   const statusMap = { A: "Aランク対応中", B: "ナーチャリング中", C: "3ヶ月後フォロー" };
   if (statusMap[analysis.rank]) {
     sheet.getRange(rowNum, col.STATUS + 1).setValue(statusMap[analysis.rank]);
@@ -242,18 +283,16 @@ function updateExistingRow(sheet, rowNum, analysis, emailAddr, receivedDate) {
 }
 
 /**
- * 新規行としてCRMに追加
+ * 新規行としてCRMに追加（22列）
  */
 function appendNewRow(sheet, analysis, emailAddr, senderName, receivedDate, body) {
-  const col = CONFIG.COL;
   const dateStr = formatDate(receivedDate);
-  const lastRow = sheet.getLastRow() + 1;
+  const pipelineMap = { A: "商談", B: "アプローチ中", C: "リード" };
 
-  // A〜N列に一括書き込み
   const rowData = [
     dateStr,                                    // A: 作成日
     analysis.company || senderName,             // B: 会社名
-    "",                                         // C: ホームページURL（不明）
+    "",                                         // C: ホームページURL
     "",                                         // D: 住所
     "",                                         // E: 電話番号
     "",                                         // F: レポートURL
@@ -271,15 +310,47 @@ function appendNewRow(sheet, analysis, emailAddr, senderName, receivedDate, body
       `返信抜粋: ${body.substring(0, 100)}`,
     ].filter(Boolean).join(" / "),              // M: 反応メモ
     analysis.next_action || "",                 // N: 推奨アクション
+    pipelineMap[analysis.rank] || "リード",      // O: パイプライン
+    "",                                         // P: ディール金額
+    "",                                         // Q: 受注確度
+    "",                                         // R: 予想受注日
+    analysis.person || senderName,              // S: 担当者名
+    emailAddr,                                  // T: 担当者メール
+    analysis.department || "",                  // U: 担当者部署
+    dateStr,                                    // V: 最終接触日
   ];
 
-  sheet.getRange(lastRow, 1, 1, rowData.length).setValues([rowData]);
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, rowData.length).setValues([rowData]);
+}
+
+// ==================== アクティビティ記録 ====================
+
+/**
+ * アクティビティタブに1行追加する
+ */
+function logActivity(companyName, activityType, contactName, content, result, recorder) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const activitySheet = ss.getSheetByName("アクティビティ");
+  if (!activitySheet) return; // タブが存在しない場合はスキップ
+
+  const now = new Date();
+  const timestamp = Utilities.formatDate(now, Session.getScriptTimeZone(), "yy_MM_dd HH:mm");
+
+  activitySheet.appendRow([
+    timestamp,
+    companyName,
+    activityType,
+    contactName || "",
+    content || "",
+    result || "",
+    recorder || "自動",
+  ]);
 }
 
 // ==================== ユーティリティ ====================
 
 /**
- * メールアドレスを抽出（"山田太郎 <yamada@example.com>" → "yamada@example.com"）
+ * メールアドレスを抽出
  */
 function extractEmail(fromStr) {
   const match = fromStr.match(/<(.+?)>/);

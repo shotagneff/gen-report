@@ -5,21 +5,19 @@
  */
 
 import "dotenv/config";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { google } from "googleapis";
+import { getCRMConnection, findCompanyRow, formatDateYYMMDD } from "../src/crm-common.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
-
-const TRACKING_SHEET_NAME = "リード管理CRM";
-
-// ランクに応じたステータス自動更新マッピング
+// ランクに応じたステータス・パイプライン自動更新マッピング
 const RANK_STATUS_MAP: Record<string, string> = {
   A: "Aランク対応中",
   B: "ナーチャリング中",
   C: "3ヶ月後フォロー",
+};
+
+const RANK_PIPELINE_MAP: Record<string, string> = {
+  A: "商談",
+  B: "アプローチ中",
+  C: "リード",
 };
 
 function parseArgs(argv: string[]): {
@@ -59,7 +57,7 @@ Usage: npx tsx scripts/update-crm-score.ts --company-name <name> --score <n> --r
   --contact-type TYPE     接触経路（フォーム/テレアポ/訪問/メール返信/その他）
   --memo TEXT             反応メモ
   --action TEXT           推奨アクション
-  --no-status-update      ランクに応じたステータス自動更新をスキップ
+  --no-status-update      ランクに応じたステータス/パイプライン自動更新をスキップ
 `);
       process.exit(0);
     }
@@ -75,82 +73,25 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-  if (!keyPath || !folderId) {
-    console.error("Error: GOOGLE_APPLICATION_CREDENTIALS と GOOGLE_DRIVE_FOLDER_ID を .env に設定してください");
-    process.exit(2);
-  }
+  const conn = await getCRMConnection();
+  const tabTitle = conn.tabs.entries().next().value?.[1].title ?? "リスト";
 
-  const auth = new google.auth.GoogleAuth({
-    keyFile: path.resolve(keyPath),
-    scopes: [
-      "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/drive",
-    ],
-    clientOptions: {
-      subject: process.env.GOOGLE_IMPERSONATE_USER,
-    },
-  });
-
-  const drive = google.drive({ version: "v3", auth });
-  const sheets = google.sheets({ version: "v4", auth });
-
-  // リード管理CRMを検索
-  const listRes = await drive.files.list({
-    q: `name='${TRACKING_SHEET_NAME}' and '${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
-    fields: "files(id)",
-    pageSize: 1,
-  });
-
-  const file = listRes.data.files?.[0];
-  if (!file?.id) {
-    console.error("Error: リード管理CRMが見つかりません");
-    process.exit(1);
-  }
-
-  const spreadsheetId = file.id;
-  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" });
-  const tabTitle = meta.data.sheets?.[0].properties?.title ?? "リスト";
-
-  // 全データを読み取り
-  const dataRes = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${tabTitle}'!A:N`,
-  });
-
-  const rows = dataRes.data.values ?? [];
-  if (rows.length <= 1) {
-    console.error("Error: CRMにデータがありません");
-    process.exit(1);
-  }
-
-  // 会社名で検索
-  let matchRow = -1;
-  for (let i = 1; i < rows.length; i++) {
-    const cellValue = rows[i][1] ?? "";
-    if (cellValue.includes(companyName) || companyName.includes(cellValue)) {
-      matchRow = i;
-      break;
-    }
-  }
-
-  if (matchRow < 0) {
+  const match = await findCompanyRow(conn.sheets, conn.spreadsheetId, tabTitle, companyName);
+  if (!match) {
     console.error(`Error: 「${companyName}」に一致する会社が見つかりません`);
     process.exit(1);
   }
 
-  const matchedName = rows[matchRow][1];
-  const rowNum = matchRow + 1; // 1-indexed
+  const matchedName = match.rowData[1];
+  const rowNum = match.rowIndex;
 
   // スコアリング日を自動設定
-  const now = new Date();
-  const scoringDate = `${String(now.getFullYear()).slice(2)}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
+  const scoringDate = formatDateYYMMDD();
 
   // I〜N列を一括更新
   const updateValues = [score, rank, scoringDate, contactType, memo, action];
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
+  await conn.sheets.spreadsheets.values.update({
+    spreadsheetId: conn.spreadsheetId,
     range: `'${tabTitle}'!I${rowNum}:N${rowNum}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [updateValues] },
@@ -159,16 +100,39 @@ async function main(): Promise<void> {
   console.error(`✅ 「${matchedName}」のスコアリングデータを更新しました（行: ${rowNum}）`);
   console.error(`   スコア: ${score} / ランク: ${rank} / 接触経路: ${contactType}`);
 
-  // ランクに応じてステータスを自動更新
-  if (updateStatus && rank && RANK_STATUS_MAP[rank]) {
-    const statusRange = `'${tabTitle}'!H${rowNum}`;
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: statusRange,
-      valueInputOption: "USER_ENTERED",
-      requestBody: { values: [[RANK_STATUS_MAP[rank]]] },
+  // ランクに応じてステータスとパイプラインを自動更新
+  if (updateStatus && rank) {
+    const updates: Array<{ range: string; values: string[][] }> = [];
+
+    if (RANK_STATUS_MAP[rank]) {
+      updates.push({ range: `'${tabTitle}'!H${rowNum}`, values: [[RANK_STATUS_MAP[rank]]] });
+      console.error(`   ステータスを「${RANK_STATUS_MAP[rank]}」に更新しました`);
+    }
+    if (RANK_PIPELINE_MAP[rank]) {
+      updates.push({ range: `'${tabTitle}'!O${rowNum}`, values: [[RANK_PIPELINE_MAP[rank]]] });
+      console.error(`   パイプラインを「${RANK_PIPELINE_MAP[rank]}」に更新しました`);
+    }
+
+    if (updates.length > 0) {
+      await conn.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: conn.spreadsheetId,
+        requestBody: { valueInputOption: "USER_ENTERED", data: updates },
+      });
+    }
+  }
+
+  // アクティビティ記録
+  try {
+    const { appendActivityRow } = await import("../src/tracking-sheet.js");
+    await appendActivityRow(conn.sheets, conn.spreadsheetId, {
+      companyName: matchedName,
+      activityType: "スコアリング更新",
+      content: `スコア: ${score} / ランク: ${rank} / 経路: ${contactType}${memo ? ` / メモ: ${memo}` : ""}`,
+      result: action,
+      recorder: "自動",
     });
-    console.error(`   ステータスを「${RANK_STATUS_MAP[rank]}」に更新しました`);
+  } catch (_) {
+    // アクティビティ記録失敗は無視
   }
 }
 

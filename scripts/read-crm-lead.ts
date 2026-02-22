@@ -8,15 +8,7 @@
  */
 
 import "dotenv/config";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { google } from "googleapis";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
-
-const TRACKING_SHEET_NAME = "リード管理CRM";
+import { getCRMConnection } from "../src/crm-common.js";
 
 function parseArgs(argv: string[]): { companyName: string; all: boolean; unscored: boolean } {
   let companyName = "";
@@ -58,6 +50,14 @@ interface CRMLead {
   contactPath: string;
   responseNotes: string;
   recommendedAction: string;
+  pipeline: string;
+  dealAmount: string;
+  winProbability: string;
+  expectedCloseDate: string;
+  contactName: string;
+  contactEmail: string;
+  contactDepartment: string;
+  lastContactDate: string;
 }
 
 function rowToLead(row: string[], rowIndex: number): CRMLead {
@@ -77,6 +77,14 @@ function rowToLead(row: string[], rowIndex: number): CRMLead {
     contactPath: row[11] ?? "",
     responseNotes: row[12] ?? "",
     recommendedAction: row[13] ?? "",
+    pipeline: row[14] ?? "",
+    dealAmount: row[15] ?? "",
+    winProbability: row[16] ?? "",
+    expectedCloseDate: row[17] ?? "",
+    contactName: row[18] ?? "",
+    contactEmail: row[19] ?? "",
+    contactDepartment: row[20] ?? "",
+    lastContactDate: row[21] ?? "",
   };
 }
 
@@ -88,47 +96,12 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-  if (!keyPath || !folderId) {
-    console.error("Error: GOOGLE_APPLICATION_CREDENTIALS と GOOGLE_DRIVE_FOLDER_ID を .env に設定してください");
-    process.exit(2);
-  }
+  const conn = await getCRMConnection();
+  const tabTitle = conn.tabs.entries().next().value?.[1].title ?? "リスト";
 
-  const auth = new google.auth.GoogleAuth({
-    keyFile: path.resolve(keyPath),
-    scopes: [
-      "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/drive",
-    ],
-    clientOptions: {
-      subject: process.env.GOOGLE_IMPERSONATE_USER,
-    },
-  });
-
-  const drive = google.drive({ version: "v3", auth });
-  const sheets = google.sheets({ version: "v4", auth });
-
-  // リード管理CRMを検索
-  const listRes = await drive.files.list({
-    q: `name='${TRACKING_SHEET_NAME}' and '${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
-    fields: "files(id)",
-    pageSize: 1,
-  });
-
-  const file = listRes.data.files?.[0];
-  if (!file?.id) {
-    console.error("Error: リード管理CRMが見つかりません");
-    process.exit(1);
-  }
-
-  const spreadsheetId = file.id;
-  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" });
-  const tabTitle = meta.data.sheets?.[0].properties?.title ?? "リスト";
-
-  const dataRes = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${tabTitle}'!A:N`,
+  const dataRes = await conn.sheets.spreadsheets.values.get({
+    spreadsheetId: conn.spreadsheetId,
+    range: `'${tabTitle}'!A:V`,
   });
 
   const rows = dataRes.data.values ?? [];
@@ -141,15 +114,15 @@ async function main(): Promise<void> {
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    if (!row || !row[1]) continue; // 会社名が空の行はスキップ
+    if (!row || !row[1]) continue;
 
     if (companyName) {
       const cellValue = row[1] ?? "";
       if (cellValue.includes(companyName) || companyName.includes(cellValue)) {
-        leads.push(rowToLead(row, i + 1)); // 1-indexed row number
+        leads.push(rowToLead(row, i + 1));
       }
     } else if (unscored) {
-      if (!row[8]) { // I列（スコア）が空
+      if (!row[8]) {
         leads.push(rowToLead(row, i + 1));
       }
     } else {
@@ -162,7 +135,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // 単一企業検索の場合は最初の1件をオブジェクトで、それ以外は配列で出力
   if (companyName && leads.length === 1) {
     console.log(JSON.stringify(leads[0], null, 2));
   } else {

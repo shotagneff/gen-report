@@ -37,6 +37,10 @@ npx tsx scripts/read-crm-lead.ts --unscored
 - `outreachMessage`: フォーム営業文
 - `status`: 現在のステータス
 - `score`, `rank`: 現在のスコア/ランク（あれば）
+- `pipeline`: パイプラインステージ
+- `dealAmount`, `winProbability`, `expectedCloseDate`: ディール情報
+- `contactName`, `contactEmail`, `contactDepartment`: 担当者情報
+- `lastContactDate`: 最終接触日
 
 ## ステップ3: レポートデータの読み込み
 
@@ -157,9 +161,11 @@ npx tsx scripts/update-crm-score.ts \
 
 メモやアクションが長い場合は一時ファイル経由で渡してください。
 
-ランクに応じてH列（ステータス）も自動更新されます:
-- A → 「Aランク対応中」
-- B → 「ナーチャリング中」
-- C → 「3ヶ月後フォロー」
+ランクに応じてH列（ステータス）とO列（パイプライン）も自動更新されます:
+- A → ステータス「Aランク対応中」/ パイプライン「商談」
+- B → ステータス「ナーチャリング中」/ パイプライン「アプローチ中」
+- C → ステータス「3ヶ月後フォロー」/ パイプライン「リード」
 
 ステータスを変更したくない場合は `--no-status-update` を付与してください。
+
+スコアリング実行時にアクティビティタブにも自動で記録されます。
