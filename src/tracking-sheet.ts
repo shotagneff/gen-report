@@ -17,6 +17,7 @@ const TAB_CONTACTS = "コンタクト";
 const TAB_ACTIVITIES = "アクティビティ";
 const TAB_TASKS = "タスク";
 const TAB_DASHBOARD = "ダッシュボード";
+const TAB_NURTURE = "ナーチャリング";
 
 // ==================== リストタブ定義 ====================
 
@@ -29,7 +30,7 @@ const HEADERS = [
 ];
 const COL_COUNT = HEADERS.length; // 22
 
-const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み", "フォーム営業完了", "Aランク対応中", "ナーチャリング中", "3ヶ月後フォロー"];
+const STATUS_OPTIONS = ["未アプローチ", "アプローチ済み", "フォーム営業完了", "Aランク対応中", "ナーチャリング中", "3ヶ月後フォロー", "温度上昇アラート", "停止（返信受信）"];
 const RANK_OPTIONS = ["A", "B", "C"];
 const CONTACT_PATH_OPTIONS = ["フォーム", "テレアポ", "訪問", "メール返信", "その他"];
 const PIPELINE_STAGES = ["リード", "アプローチ中", "商談", "提案", "交渉", "受注", "失注"];
@@ -47,7 +48,7 @@ const KEYMAN_OPTIONS = ["決裁者", "窓口", "技術担当", "その他"];
 
 const ACTIVITY_HEADERS = ["日時", "会社名", "種別", "担当者名", "内容", "結果", "記録者"];
 const ACTIVITY_COL_WIDTHS = [140, 180, 130, 120, 400, 300, 80];
-const ACTIVITY_TYPES = ["メール送信", "メール返信受信", "電話", "訪問", "スコアリング更新", "ステータス変更", "フォーム営業", "その他"];
+const ACTIVITY_TYPES = ["メール送信", "メール返信受信", "電話", "訪問", "スコアリング更新", "ステータス変更", "フォーム営業", "ナーチャリング開封", "ナーチャリングクリック", "その他"];
 
 // ==================== タスクタブ定義 ====================
 
@@ -55,6 +56,11 @@ const TASK_HEADERS = ["タスクID", "会社名", "タスク内容", "期限", "
 const TASK_COL_WIDTHS = [100, 180, 300, 120, 80, 100, 120, 120];
 const TASK_PRIORITY = ["高", "中", "低"];
 const TASK_STATUS_OPTIONS = ["未着手", "進行中", "完了"];
+
+// ==================== ナーチャリングタブ定義 ====================
+
+const NURTURE_HEADERS = ["会社名", "担当者メール", "Step", "件名", "本文", "送信予定日", "送信日時", "開封", "クリック回数"];
+const NURTURE_COL_WIDTHS = [180, 200, 60, 250, 400, 120, 140, 80, 80];
 
 // ==================== スタイル定数 ====================
 
@@ -327,6 +333,11 @@ async function ensureAllTabs(
       name: TAB_DASHBOARD,
       headers: [],
       colWidths: [],
+    },
+    {
+      name: TAB_NURTURE,
+      headers: NURTURE_HEADERS,
+      colWidths: NURTURE_COL_WIDTHS,
     },
   ];
 

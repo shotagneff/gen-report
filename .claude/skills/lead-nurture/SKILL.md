@@ -290,3 +290,46 @@ npx tsx scripts/log-crm-activity.ts --company "{会社名}" --type "メール送
 複数ステップを一括生成した場合は、各ステップごとに上記コマンドを実行してください。
 
 「いいえ」の場合はスキップします。
+
+## ステップ8: ナーチャリング自動送信の登録（任意）
+
+AskUserQuestion で以下を確認します：
+
+**「ナーチャリングメールの自動送信を設定しますか？
+（GASが送信予定日に自動的にメールを送信し、開封・クリックを追跡します）」**
+
+「はい」の場合:
+
+1. 担当者メールアドレスを確認します（CRMのT列から取得、なければAskUserQuestionで確認）
+2. 送信開始日を確認します（デフォルト: 明日）
+3. 各Stepの送信予定日を計算します（Step1=開始日, Step2=+3日, Step3=+7日, Step4=+12日, Step5=+17日）
+4. 生成した5Stepのメールを以下のJSON形式で保存します:
+
+```bash
+# data/out/{会社名}_nurture.json を作成
+```
+
+JSONフォーマット:
+```json
+{
+  "company": "会社名",
+  "steps": [
+    { "step": 1, "subject": "件名", "body": "本文", "scheduledDate": "YY_MM_DD" },
+    { "step": 2, "subject": "件名", "body": "本文", "scheduledDate": "YY_MM_DD" },
+    { "step": 3, "subject": "件名", "body": "本文", "scheduledDate": "YY_MM_DD" },
+    { "step": 4, "subject": "件名", "body": "本文", "scheduledDate": "YY_MM_DD" },
+    { "step": 5, "subject": "件名", "body": "本文", "scheduledDate": "YY_MM_DD" }
+  ]
+}
+```
+
+5. 以下を実行してCRMに登録します:
+
+```bash
+npx tsx scripts/register-nurture.ts \
+  --company-name "{会社名}" \
+  --email "{メールアドレス}" \
+  --nurture-file "data/out/{会社名}_nurture.json"
+```
+
+「いいえ」の場合はスキップします。

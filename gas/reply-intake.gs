@@ -120,6 +120,13 @@ function processThread(thread, sheet, processedLabel) {
     Logger.log(`アクティビティ記録失敗: ${e.message}`);
   }
 
+  // ナーチャリング連携: 返信があった場合にナーチャリングを停止
+  try {
+    handleNurtureReply_(analysis.company || companyFromSubject || senderName);
+  } catch (e) {
+    Logger.log(`ナーチャリング連携エラー: ${e.message}`);
+  }
+
   // 処理済みラベルを付与
   thread.addLabel(processedLabel);
   thread.markRead();
@@ -410,4 +417,43 @@ function testProcessLatestReply() {
   const processedLabel = getOrCreateLabel(CONFIG.PROCESSED_LABEL);
   processThread(threads[0], sheet, processedLabel);
   Logger.log("テスト完了");
+}
+
+// ==================== ナーチャリング連携 ====================
+
+/**
+ * ナーチャリング対象企業からの返信を検知した場合、ナーチャリングを停止する。
+ * nurture-config.gs の NURTURE_CONFIG が同一プロジェクト内にある前提。
+ */
+function handleNurtureReply_(companyName) {
+  if (!companyName) return;
+
+  // NURTURE_CONFIG が定義されていない場合（ナーチャリングGASが未導入）はスキップ
+  if (typeof NURTURE_CONFIG === "undefined") return;
+
+  const nurtureSheet = getNurtureSheet_();
+  if (!nurtureSheet) return;
+
+  const data = nurtureSheet.getDataRange().getValues();
+  let found = false;
+
+  for (let i = 1; i < data.length; i++) {
+    const cellCompany = String(data[i][NURTURE_CONFIG.COL.COMPANY] || "");
+    if (cellCompany.includes(companyName) || companyName.includes(cellCompany)) {
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) return;
+
+  // アクティビティに記録（ステータス更新は processThread 内の updateExistingRow で既に実施済み）
+  logNurtureActivity_(
+    companyName,
+    "ステータス変更",
+    "ナーチャリング停止（メール返信受信のため）",
+    "温度スコア+50"
+  );
+
+  Logger.log(`ナーチャリング停止: ${companyName}（返信受信）`);
 }
